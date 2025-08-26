@@ -58,7 +58,7 @@ const App: React.FC = () => {
   const MAX_PARTICLES = 800; // верхний предел в памяти
   
   const [items, setItems] = useState<GiftItem[]>([]);
-  // Hydrate from local cache so UI appears immediately before Firestore responds
+  // Hydrate from local cache so UI appears immediately before Firestore respondsавы
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
