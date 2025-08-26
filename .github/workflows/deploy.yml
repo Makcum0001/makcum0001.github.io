@@ -1,27 +1,21 @@
-name: Deploy to GitHub Pages
+name: Build and publish to main/docs
 
 on:
   push:
     branches: [ main ]
+    # Prevent workflow from running on its own commits to the docs/ folder
+    paths-ignore:
+      - 'docs/**'
   workflow_dispatch: {}
 
-# Required permissions so the actions can upload artifacts and create Pages deployments
 permissions:
-  contents: read
+  contents: write # Required to commit to the repository
   pages: write
   id-token: write
 
-env:
-  CI: true
-
 jobs:
-  build-and-deploy:
-    # avoid multiple concurrent deployments cancelling each other
-    concurrency:
-      group: "pages-deploy-${{ github.ref }}"
-      cancel-in-progress: true
+  build-and-publish:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,7 +27,7 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Cache npm
+      - name: Cache npm dependencies
         uses: actions/cache@v4
         with:
           path: ~/.npm
@@ -44,19 +38,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
+      - name: Build application
         run: npm run build
 
-      - name: Verify build output
+      - name: Copy build output to docs/
         run: |
-          echo "dist contents:" && ls -la dist || true
-          if [ ! -f dist/index.html ]; then echo "dist/index.html not found" && exit 1; fi
+          rm -rf docs
+          mkdir -p docs
+          cp -a dist/. docs/
+          # Create a .nojekyll file to disable Jekyll processing by GitHub Pages
+          touch docs/.nojekyll
 
-      - name: Deploy to GitHub Pages (push to gh-pages branch)
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
-          publish_branch: gh-pages
-          # avoid creating empty commits
-          allow_empty_commit: false
+      - name: Commit and push docs/ to main
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs
+          # Commit only if there are changes
+          if ! git diff --staged --quiet; then
+            git commit -m "docs: Update site build [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "No changes to commit."
+          fi
