@@ -52,11 +52,11 @@ jobs:
           echo "dist contents:" && ls -la dist || true
           if [ ! -f dist/index.html ]; then echo "dist/index.html not found" && exit 1; fi
 
-      - name: Upload artifact for GitHub Pages
-        uses: actions/upload-artifact@v4
+      - name: Deploy to GitHub Pages (push to gh-pages branch)
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          name: github-pages
-          path: ./dist
-
-      - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v1
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          # avoid creating empty commits
+          allow_empty_commit: false
