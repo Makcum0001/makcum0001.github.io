@@ -59,9 +59,6 @@ const App: React.FC = () => {
   
   const [items, setItems] = useState<GiftItem[]>([]);
   const [loading, setLoading] = useState(true);
-  // simulated network/check delay (ms) to make loading feel realistic in dev
-  const LOADING_SIM_DELAY = 700;
-  const loadingTimerRef = useRef<number | null>(null);
   // Track pending deletions and keep a local copy so card can animate out
   const [pendingDeletes, setPendingDeletes] = useState<Set<string>>(new Set());
   const [localRemovedItems, setLocalRemovedItems] = useState<Record<string, GiftItem>>({});
@@ -78,14 +75,11 @@ const App: React.FC = () => {
   // Подписываемся на коллекцию gifts через модуль api/gifts
   useEffect(() => {
     const unsub = subscribeToGifts(setItems, () => {
-      // deliberately wait a bit so the loader is visible and feels intentional
-      loadingTimerRef.current = window.setTimeout(() => setLoading(false), LOADING_SIM_DELAY);
+      // stop artificial delay — show cards as soon as data arrives
+      setLoading(false);
     });
     return () => {
       unsub();
-      if (loadingTimerRef.current) {
-        clearTimeout(loadingTimerRef.current);
-      }
     };
   }, []);
 
