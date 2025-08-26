@@ -58,12 +58,39 @@ const App: React.FC = () => {
   const MAX_PARTICLES = 800; // верхний предел в памяти
   
   const [items, setItems] = useState<GiftItem[]>([]);
+  // Hydrate from local cache so UI appears immediately before Firestore responds
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as GiftItem[];
+        if (Array.isArray(parsed) && parsed.length) {
+          setItems(parsed);
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+  
+  // Persist items to local cache so future loads are instant
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    } catch (e) {
+      // ignore
+    }
+  }, [items]);
+
+  // Start in loading state — keep loader available if Firestore takes long.
+  // We still hydrate from localStorage above so items render immediately while loading=true.
   const [loading, setLoading] = useState(true);
   // Track pending deletions and keep a local copy so card can animate out
   const [pendingDeletes, setPendingDeletes] = useState<Set<string>>(new Set());
   const [localRemovedItems, setLocalRemovedItems] = useState<Record<string, GiftItem>>({});
   // store original positions for items that are pending deletion to keep them stable in the UI
   const [pendingPositions, setPendingPositions] = useState<Record<string, number>>({});
+  const [optimisticRemoved, setOptimisticRemoved] = useState<Set<string>>(new Set());
   const [form, setForm] = useState<NewGiftForm>(defaultForm);
   const [profileImage] = useState<string>(photo);
   const [bursts, setBursts] = useState<Burst25[]>([]);
@@ -71,6 +98,28 @@ const App: React.FC = () => {
   const burstsRef = useRef<Burst25[]>([]);
   const miniFireworksRef = useRef<MiniFirework[]>([]);
   const rafRef = useRef<number | null>(null);
+
+  // Confirmation modal state & focus handling
+  const [confirmTarget, setConfirmTarget] = useState<GiftItem | null>(null);
+  const confirmBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // Focus confirm button when modal opens
+  useEffect(() => {
+    if (confirmTarget) {
+      // delay to allow element to mount
+      const t = setTimeout(() => confirmBtnRef.current?.focus(), 0);
+      return () => clearTimeout(t);
+    }
+  }, [confirmTarget]);
+
+  // Close modal on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmTarget(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Подписываемся на коллекцию gifts через модуль api/gifts
   useEffect(() => {
@@ -110,41 +159,66 @@ const App: React.FC = () => {
 
   const deleteItem = useCallback(async (item: GiftItem) => {
     const id = item.id;
-    console.debug('deleteItem called for', id, item.name);
+    console.debug('deleteItem (optimistic) called for', id, item.name);
 
     // capture current index to keep visual position stable
     const idx = items.findIndex(i => i.id === id);
     setPendingPositions(prev => ({ ...prev, [id]: idx >= 0 ? idx : Object.keys(prev).length }));
 
-    // mark pending and keep a local copy for UI
-    setPendingDeletes(prev => new Set(prev).add(id));
+    // mark pending and keep a local copy for possible rollback
+    setPendingDeletes(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
     setLocalRemovedItems(prev => ({ ...prev, [id]: item }));
 
-    try {
-      await deleteGift(id);
-      console.debug('deleteGift resolved for', id);
-      // wait for animation to finish before cleaning local cache
-      const ANIM_MS = 420; // matches UI animation duration
-      setTimeout(() => {
-        setPendingDeletes(prev => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-        setLocalRemovedItems(prev => {
-          const copy = { ...prev };
-          delete copy[id];
-          return copy;
-        });
-        setPendingPositions(prev => {
-          const copy = { ...prev };
-          delete copy[id];
-          return copy;
-        });
-      }, ANIM_MS);
-    } catch (err) {
-      console.error('deleteGift error', err, id);
-      // rollback if deletion failed
+    // After animation, hide the item optimistically from UI (so it disappears smoothly)
+    const ANIM_MS = 420; // matches UI animation duration
+    const hideTimer = setTimeout(() => {
+      // remove pending visual state and hide from list
+      setPendingDeletes(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setOptimisticRemoved(prev => {
+        const next = new Set(prev);
+        next.add(id);
+        return next;
+      });
+      // keep localRemovedItems as backup for rollback until server confirms
+    }, ANIM_MS);
+
+    // Fire-and-forget delete; rollback on error
+    deleteGift(id).then(() => {
+      console.debug('deleteGift succeeded for', id);
+      // server removed doc; clean up local caches
+      clearTimeout(hideTimer);
+      setLocalRemovedItems(prev => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+      setPendingPositions(prev => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+      setOptimisticRemoved(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }).catch((err) => {
+      console.error('deleteGift failed, rolling back', err, id);
+      clearTimeout(hideTimer);
+      // rollback: unhide and remove local backup
+      setOptimisticRemoved(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       setPendingDeletes(prev => {
         const next = new Set(prev);
         next.delete(id);
@@ -160,30 +234,29 @@ const App: React.FC = () => {
         delete copy[id];
         return copy;
       });
-    }
+      // Optionally: notify user
+      try {
+        if (typeof window !== 'undefined') window.alert('Ошибка удаления. Попробуйте ещё раз.');
+      } catch (e) {}
+    });
   }, [items]);
 
   const confirmAndDelete = useCallback((item: GiftItem) => {
-    const id = item.id;
-    const human = `${item.name}${item.category ? ` — ${item.category}` : ''}`;
-    const msg = `Удалить подарок "${human}"?\n\nID: ${id}\n\nПодтвердите действие.`;
-    // Use built-in confirm for now; can replace with custom modal later
-    if (typeof window !== 'undefined' && window.confirm(msg)) {
-      deleteItem(item);
-    } else {
-      console.debug('delete cancelled for', id);
-    }
+    // Open styled confirmation modal for this item
+    setConfirmTarget(item);
   }, [deleteItem]);
 
   const filtered = useMemo(() => items, [items]);
   // displayItems merges live items with any locally-stashed removed items
   const displayItems = useMemo(() => {
-    // start from the live list
-    const list = [...items];
-    // ensure pending items are placed at their captured positions
+    // start from the live list, excluding any optimistically-removed ids
+    const list = items.filter(i => !optimisticRemoved.has(i.id));
+     // ensure pending items are placed at their captured positions
     Object.keys(pendingPositions).forEach(id => {
       const pos = pendingPositions[id];
       const liveIndex = list.findIndex(i => i.id === id);
+      // skip inserting if item was optimistically removed
+      if (optimisticRemoved.has(id)) return;
       const toInsert = list.find(i => i.id === id) || localRemovedItems[id];
       if (!toInsert) return;
       // remove if exists
@@ -194,6 +267,7 @@ const App: React.FC = () => {
     });
     // add any localRemovedItems that are not present (fallback)
     Object.keys(localRemovedItems).forEach(id => {
+      if (optimisticRemoved.has(id)) return;
       if (!list.find(i => i.id === id)) {
         list.push(localRemovedItems[id]);
       }
@@ -343,6 +417,9 @@ const App: React.FC = () => {
     return list.sort((a, b) => getTime(b) - getTime(a));
   }, [displayItems, selectedCategory]);
 
+  // Show the big centered loader only when we're loading and have no cached/display items
+  const showLoader = loading && displayItems.length === 0;
+
   return (
     <div className={`relative min-h-screen w-full flex flex-col items-center px-4 pb-16 ${fancy ? 'design-grid' : ''}`}>
       <header className="relative w-full max-w-3xl pt-6 flex flex-col items-center text-center">
@@ -354,6 +431,9 @@ const App: React.FC = () => {
           >
             {fancy ? 'Classic' : 'Fancy'} UI
           </button>
+          {loading && displayItems.length > 0 && (
+            <div className="flex items-center gap-2 rounded-full bg-neutral-50/60 px-3 py-1 text-xs text-neutral-600">Синхронизация…</div>
+          )}
           {
             (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) && (
               <button
@@ -456,7 +536,7 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {loading ? (
+        {showLoader ? (
            // centered circular loader
            <div className="col-span-full flex items-center justify-center py-16">
             <div role="status" aria-live="polite" className="flex flex-col items-center gap-4">
@@ -563,6 +643,56 @@ const App: React.FC = () => {
           );
         })}
       </div>
+
+      {/* Confirmation modal (styled) */}
+      {confirmTarget && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setConfirmTarget(null)}
+            aria-hidden="true"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-title"
+            className="relative z-50 w-full max-w-md transform rounded-xl bg-white p-6 shadow-2xl transition-all duration-200 ease-out translate-y-0"
+          >
+            <h3 id="confirm-title" className="text-lg font-semibold text-neutral-900">Подтвердите удаление</h3>
+            <p className="mt-2 text-sm text-neutral-600">Вы уверены, что хотите удалить подарок <span className="font-semibold">"{confirmTarget.name}"</span>{confirmTarget.category ? ` — ${confirmTarget.category}` : ''}?</p>
+            <p className="mt-2 text-xs text-neutral-400 break-words">ID: <span className="font-mono text-xs text-neutral-600">{confirmTarget.id}</span></p>
+
+            <div className="mt-4 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmTarget(null)}
+                className="rounded-md px-4 py-2 bg-neutral-100 text-neutral-800 hover:bg-neutral-200 transition"
+              >
+                Отмена
+              </button>
+              <button
+                ref={confirmBtnRef}
+                type="button"
+                onClick={async () => {
+                  const it = confirmTarget;
+                  setConfirmTarget(null);
+                  if (it) {
+                    try {
+                      await deleteItem(it);
+                    } catch (e) {
+                      console.error('confirm modal delete error', e);
+                    }
+                  }
+                }}
+                className="rounded-md px-4 py-2 bg-red-600 text-white hover:bg-red-700 transition"
+              >
+                Удалить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
