@@ -27,7 +27,15 @@ const GiftCard: React.FC<Props> = ({ item, onToggle, onDelete, isDeleting }) => 
   };
 
   const handleStartBooking = () => {
+    console.debug('[GiftCard] start booking click', { id: item.id, isBooked: item.isBooked });
     setIsBooking(true);
+    // Fallback: if for some reason state not reflected next tick, force re-render
+    requestAnimationFrame(() => {
+      if (!isBooking) {
+        // Note: isBooking here is stale closure value (pre-set), this is only for log visibility
+        console.debug('[GiftCard] post RAF (stale isBooking value logged)');
+      }
+    });
   };
 
   const handleUnbook = () => {
@@ -102,12 +110,14 @@ const GiftCard: React.FC<Props> = ({ item, onToggle, onDelete, isDeleting }) => 
             />
             <div className="grid grid-cols-2 gap-2">
               <button
+                type="button"
                 onClick={handleConfirmBooking}
                 className="rounded-md px-4 py-2 text-sm font-semibold bg-accent text-white hover:bg-booked shadow-sm focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2"
               >
                 Подтвердить
               </button>
               <button
+                type="button"
                 onClick={handleCancelBooking}
                 className="rounded-md px-4 py-2 text-sm font-semibold bg-neutral-200 text-neutral-800 hover:bg-neutral-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-neutral-400 focus:ring-offset-2"
               >
@@ -118,6 +128,7 @@ const GiftCard: React.FC<Props> = ({ item, onToggle, onDelete, isDeleting }) => 
         ) : (
           // Not booked, show the initial book button
           <button
+            type="button"
             onClick={handleStartBooking}
             className="rounded-md px-4 py-2 text-sm font-semibold bg-accent text-white hover:bg-booked shadow-sm focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2"
           >
