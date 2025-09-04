@@ -1,6 +1,7 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
+// Lazy analytics import to reduce chances of adblockers blocking Firestore channels
+// (analytics can trigger stricter filter lists). We'll dynamic import below.
 import { getFirestore } from 'firebase/firestore';
 // TODO: Add SDKs for Firebase products that you want to use
 // https://firebase.google.com/docs/web/setup#available-libraries
@@ -19,5 +20,14 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
+
+// Lazy load analytics only in browser and non-incognito ad-block friendly attempt
+if (typeof window !== 'undefined') {
+  import('firebase/analytics')
+    .then(mod => {
+      try { mod.getAnalytics(app); } catch {}
+    })
+    .catch(() => { /* ignore */ });
+}
+
 export const db = getFirestore(app);

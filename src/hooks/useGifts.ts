@@ -119,9 +119,14 @@ export function useGifts() {
 
   const toggleBooked = useCallback(async (id: string, bookedBy?: string) => {
     try {
-      await updateBooking(id, bookedBy ?? null);
+      // If bookedBy is an empty string we still want to mark as booked, but store null in DB to keep schema tidy
+      const value = bookedBy === '' ? null : (bookedBy ?? null);
+      await updateBooking(id, value);
     } catch (err) {
       console.error('updateBooking error', err);
+      if (typeof window !== 'undefined') {
+        window.alert('Не удалось сохранить бронь. Возможно блокировщик или сеть. Попробуйте отключить расширения и обновить страницу.');
+      }
     }
   }, []);
 

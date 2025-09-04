@@ -15,7 +15,8 @@ const GiftCard: React.FC<Props> = ({ item, onToggle, onDelete, isDeleting }) => 
   const [name, setName] = useState(item.bookedBy ?? '');
 
   const handleConfirmBooking = () => {
-    onToggle(item.id, name.trim() || undefined);
+  // Pass empty string instead of undefined so booking without a name still sets isBooked = true
+  onToggle(item.id, name.trim() || '');
     setIsBooking(false);
   };
 
@@ -30,7 +31,8 @@ const GiftCard: React.FC<Props> = ({ item, onToggle, onDelete, isDeleting }) => 
   };
 
   const handleUnbook = () => {
-    onToggle(item.id, undefined);
+  // Passing undefined signals unbooking (handled in update logic)
+  onToggle(item.id, undefined);
   };
 
   return (
