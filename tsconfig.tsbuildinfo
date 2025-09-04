@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/firebase.ts","./src/main.tsx","./src/types.ts","./src/api/gifts.ts","./src/assets/global.d.ts","./src/components/GiftCard.tsx","./src/utils/nanoid.ts"],"version":"5.9.2"}
